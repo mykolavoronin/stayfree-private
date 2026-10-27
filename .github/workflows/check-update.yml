@@ -1,0 +1,62 @@
+name: check-update
+
+# Every 6 hours: is there a NEW StayFree release? If so, scan + build both presets.
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force: { description: 'Build even if the version is unchanged', type: boolean, default: false }
+
+permissions:
+  contents: write   # commit state/last_version.json
+  issues: write     # "Patch needs update" issues (opened by build.yml)
+
+concurrency:
+  group: stayfree-check-update
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      latest: ${{ steps.v.outputs.latest }}
+      new: ${{ steps.v.outputs.new }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Resolve latest version (HEAD request only, no APK download)
+        run: |
+          latest=$(python3 scripts/fetch_latest.py --check | jq -r .version)
+          last=$(jq -r '.version // ""' state/last_version.json 2>/dev/null || echo "")
+          echo "latest=$latest last_built=$last"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$latest" != "$last" ] || [ "${{ inputs.force }}" = "true" ]; then
+            echo "new=true" >> "$GITHUB_OUTPUT"; echo "::notice::New StayFree version $latest (last built: ${last:-none})"
+          else echo "new=false" >> "$GITHUB_OUTPUT"; fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.new == 'true'
+    uses: ./.github/workflows/build.yml
+    with: { variant: both }
+    secrets: inherit
+
+  record:
+    needs: [check, build]
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Commit state/last_version.json
+        env:
+          VER: ${{ needs.build.outputs.version }}
+        run: |
+          mkdir -p state
+          jq -n --arg v "$VER" --arg t "$(date -u +%FT%TZ)" --arg run "${{ github.run_id }}" \
+            '{version:$v, built_at:$t, run_id:$run, presets:["sync","max"]}' > state/last_version.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/last_version.json
+          git diff --cached --quiet || git commit -m "state: built StayFree $VER"
+          git push

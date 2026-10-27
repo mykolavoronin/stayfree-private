@@ -1,0 +1,136 @@
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'sync | max | both'
+        default: both
+      emulator_test:
+        description: 'Also launch the APKs in an Android emulator (slow, best-effort)'
+        type: boolean
+        default: false
+      disable:
+        description: 'Feature toggles: patch ids to skip (comma separated)'
+        default: ''
+      enable:
+        description: 'Feature toggles: patch ids to add (comma separated)'
+        default: ''
+  workflow_call:
+    inputs:
+      variant: { type: string, default: both }
+      emulator_test: { type: boolean, default: false }
+      disable: { type: string, default: '' }
+      enable: { type: string, default: '' }
+    outputs:
+      version: { value: '${{ jobs.build.outputs.version }}' }
+  schedule:
+    - cron: '17 4 * * 1'   # weekly safety net (Mondays 04:17 UTC)
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: stayfree-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: actions/cache@v4
+        with:
+          path: tools
+          key: "tools-${{ hashFiles('scripts/setup_tools.sh') }}"
+      - name: Setup pinned tools
+        run: scripts/setup_tools.sh
+      - name: Fetch latest StayFree and verify the original signer
+        run: python3 scripts/fetch_latest.py --out work/src
+      - id: ver
+        run: echo "version=$(jq -r .version work/src/source.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Scan (detect-only) - every critical privacy patch must find its target
+        id: scan
+        run: scripts/build.sh --skip-fetch --scan-only
+      - name: Open "Patch needs update" issue
+        if: failure() && steps.scan.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VER: ${{ steps.ver.outputs.version }}
+        run: |
+          title="Patch needs update for v${VER}"
+          if gh issue list --state open --search "\"$title\" in:title" --json number -q '.[0].number' | grep -q .; then
+            echo "issue already open"; exit 0; fi
+          missing=$(jq -r '.presets | to_entries[] | "- **\(.key)**: \(.value.critical_missing | join(", "))"' dist/scan.json)
+          printf 'StayFree **%s** was released, but these CRITICAL patch targets were NOT FOUND, so no APK was built:\n\n%s\n\nRun `scripts/build.sh --scan-only` locally, update `patches/presets.py`, and re-run the workflow.\n\nScan report is attached to run %s.\n' \
+            "$VER" "$missing" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > body.md
+          gh issue create --title "$title" --body-file body.md
+      - name: Upload scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: scan-report, path: 'dist/scan.json', if-no-files-found: ignore }
+
+      - name: Build, patch, sign, smoke-test
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STAYFREE_DISABLE: ${{ inputs.disable }}
+          STAYFREE_ENABLE: ${{ inputs.enable }}
+        run: |
+          args=(--skip-fetch --variant "${{ inputs.variant || 'both' }}")
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::KEYSTORE_BASE64 secret not set - building UNSIGNED APKs (sign them yourself before installing)."
+            args+=(--no-sign)
+          fi
+          scripts/build.sh "${args[@]}"
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### StayFree ${{ steps.ver.outputs.version }}"
+            [ -f dist/SHA256SUMS ] && { echo '```'; cat dist/SHA256SUMS; echo '```'; }
+            for f in dist/report-*.json; do [ -f "$f" ] && jq -r '"- \(.preset): ok=\(.ok) warnings=\(.warnings|join(",")) critical_missing=\(.critical_missing|join(","))"' "$f"; done
+            for f in dist/smoke-*.json; do [ -f "$f" ] && jq -r '"- smoke \(.variant): \(.passed|length) passed, \(.failed|length) failed"' "$f"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload APKs (workflow artifact only - no public release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: StayFree-private-${{ steps.ver.outputs.version }}
+          path: |
+            dist/*.apk
+            dist/*.json
+            dist/SHA256SUMS
+          retention-days: 30
+
+  emulator:
+    needs: build
+    if: ${{ inputs.emulator_test }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: 'StayFree-private-${{ needs.build.outputs.version }}', path: dist }
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: bash scripts/emulator_smoke.sh dist
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: emulator-logs, path: 'emu-out/**' }
