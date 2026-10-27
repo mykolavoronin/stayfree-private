@@ -1,4 +1,9 @@
 {
- "version": null,
- "note": "Updated automatically by .github/workflows/check-update.yml after a successful build."
+  "version": "20.18.2",
+  "built_at": "2026-10-27T22:28:05Z",
+  "run_id": "40594704389",
+  "presets": [
+    "sync",
+    "max"
+  ]
 }
