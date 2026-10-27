@@ -50,7 +50,7 @@ jobs:
           path: tools
           key: "tools-${{ hashFiles('scripts/setup_tools.sh') }}"
       - name: Setup pinned tools
-        run: scripts/setup_tools.sh
+        run: bash scripts/setup_tools.sh
       - name: Fetch latest StayFree and verify the original signer
         run: python3 scripts/fetch_latest.py --out work/src
       - id: ver
@@ -58,7 +58,7 @@ jobs:
 
       - name: Scan (detect-only) - every critical privacy patch must find its target
         id: scan
-        run: scripts/build.sh --skip-fetch --scan-only
+        run: bash scripts/build.sh --skip-fetch --scan-only
       - name: Open "Patch needs update" issue
         if: failure() && steps.scan.outcome == 'failure'
         env:
@@ -91,7 +91,7 @@ jobs:
             echo "::warning::KEYSTORE_BASE64 secret not set - building UNSIGNED APKs (sign them yourself before installing)."
             args+=(--no-sign)
           fi
-          scripts/build.sh "${args[@]}"
+          bash scripts/build.sh "${args[@]}"
       - name: Summary
         if: always()
         run: |

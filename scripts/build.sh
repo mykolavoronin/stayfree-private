@@ -28,7 +28,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
 case "$VARIANT" in sync) VARIANTS=(sync);; max) VARIANTS=(max);; both) VARIANTS=(sync max);;
   *) echo "--variant must be sync|max|both" >&2; exit 64;; esac
 [[ -x "$TOOLS/jdk/bin/java" ]] && export PATH="$TOOLS/jdk/bin:$PATH"
-[[ -f "$TOOLS/apktool.jar" ]] || "$ROOT/scripts/setup_tools.sh"
+[[ -f "$TOOLS/apktool.jar" ]] || bash "$ROOT/scripts/setup_tools.sh"
 J() { java -Xmx6g -jar "$@"; }
 mkdir -p "$WORK" "$DIST"
 

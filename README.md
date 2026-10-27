@@ -92,8 +92,8 @@ signatures, manifest names), not by obfuscated class names, so it keeps working 
 
 ```bash
 python3 patches/stayfree_patch.py list                                  # all patch ids per preset
-STAYFREE_DISABLE=tracker-hosts scripts/build.sh --variant sync          # drop a patch
-STAYFREE_ENABLE=webview-scripts,fcm-topics scripts/build.sh --variant sync   # add patches from max
+STAYFREE_DISABLE=tracker-hosts bash scripts/build.sh --variant sync          # drop a patch
+STAYFREE_ENABLE=webview-scripts,fcm-topics bash scripts/build.sh --variant sync   # add patches from max
 python3 patches/stayfree_patch.py apply work/decoded --preset sync --disable email-backend --strict
 ```
 
@@ -104,16 +104,16 @@ A missing non-critical target is a warning; a missing **critical** target stops 
 
 ```bash
 git clone https://github.com/mykolavoronin/stayfree-private && cd stayfree-private
-scripts/setup_tools.sh                 # pinned apktool 2.10.0, APKEditor 1.4.5, uber-apk-signer 1.3.0 (+JDK 17 if missing), SHA-256 checked
-scripts/build.sh                       # latest release, both presets  (--variant sync|max|both)
+bash scripts/setup_tools.sh                 # pinned apktool 2.10.0, APKEditor 1.4.5, uber-apk-signer 1.3.0 (+JDK 17 if missing), SHA-256 checked
+bash scripts/build.sh                       # latest release, both presets  (--variant sync|max|both)
 ls dist/                               # StayFree-<ver>-sync.apk, StayFree-<ver>-max.apk, SHA256SUMS, report-*.json, smoke-*.json
 ```
 
 Other options:
 
 ```bash
-scripts/build.sh --scan-only                         # detect-only: does this release still match every critical patch?
-scripts/build.sh --input ~/Downloads/StayFree.xapk   # use a file you downloaded yourself
+bash scripts/build.sh --scan-only                         # detect-only: does this release still match every critical patch?
+bash scripts/build.sh --input ~/Downloads/StayFree.xapk   # use a file you downloaded yourself
 python3 scripts/fetch_latest.py --check              # just print the latest version
 python3 patches/stayfree_patch.py scan <apktool-dir> --preset all --strict
 ```
@@ -126,6 +126,8 @@ static smoke test → `SHA256SUMS`.
 **Signing:** set `KEYSTORE_PATH` (or `KEYSTORE_BASE64`) + `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
 If none are set, a key is generated once in `keys/` (git-ignored). **Back it up** — future updates must be
 signed with the same key or Android will refuse to update (you'd have to uninstall and lose data).
+
+(Files lose their executable bit when pushed through the GitHub API, so call scripts with `bash`.)
 
 Requirements: bash, python3 ≥ 3.9, curl, unzip, Java 17+.
 
